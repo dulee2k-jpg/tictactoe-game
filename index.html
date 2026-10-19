@@ -30,7 +30,30 @@
 
   main { text-align: center; }
 
-  h1 { font-size: 2rem; margin: 0 0 8px; }
+  h1 { font-size: 2rem; margin: 0 0 16px; }
+
+  .modes {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+
+  .mode-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .mode-btn[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: #fff;
+  }
 
   .status {
     min-height: 1.5em;
@@ -105,12 +128,18 @@
 <body>
 <main>
   <h1>틱택토</h1>
+
+  <div class="modes" role="group" aria-label="게임 모드">
+    <button type="button" class="mode-btn" data-mode="two" aria-pressed="true">2인용</button>
+    <button type="button" class="mode-btn" data-mode="computer" aria-pressed="false">컴퓨터 대전</button>
+  </div>
+
   <p class="status" id="status"></p>
 
   <div class="scores">
-    <div class="score x"><span>X</span><b id="score-x">0</b></div>
+    <div class="score x"><span id="label-x">X</span><b id="score-x">0</b></div>
     <div class="score"><span>무승부</span><b id="score-draw">0</b></div>
-    <div class="score o"><span>O</span><b id="score-o">0</b></div>
+    <div class="score o"><span id="label-o">O</span><b id="score-o">0</b></div>
   </div>
 
   <div class="board" id="board"></div>
@@ -128,11 +157,17 @@
   const boardEl = document.getElementById("board");
   const statusEl = document.getElementById("status");
   const restartBtn = document.getElementById("restart");
+  const modeButtons = document.querySelectorAll(".mode-btn");
+  const labelX = document.getElementById("label-x");
+  const labelO = document.getElementById("label-o");
   const scoreEls = { X: document.getElementById("score-x"), O: document.getElementById("score-o"), draw: document.getElementById("score-draw") };
 
+  // mode: "two" (2인용) 또는 "computer" (사람 X, 컴퓨터 O)
+  let mode = "two";
   let cells = Array(9).fill("");
   let current = "X";
   let over = false;
+  let computerTimer = null;
   const score = { X: 0, O: 0, draw: 0 };
 
   // 칸 9개를 만들어 보드에 붙입니다.
@@ -146,28 +181,56 @@
     return btn;
   });
 
-  function findWin() {
+  function findWin(board) {
     for (const line of LINES) {
       const [a, b, c] = line;
-      if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) return line;
+      if (board[a] && board[a] === board[b] && board[a] === board[c]) return line;
     }
     return null;
   }
 
-  function play(i) {
+  // 컴퓨터(O)가 두는 수: 미니맥스로 최적의 칸을 고릅니다. 컴퓨터는 지지 않습니다.
+  function minimax(board, player, depth) {
+    const win = findWin(board);
+    if (win) return { score: board[win[0]] === "O" ? 10 - depth : depth - 10 };
+    if (board.every(Boolean)) return { score: 0 };
+
+    const next = player === "O" ? "X" : "O";
+    let best = { score: player === "O" ? -Infinity : Infinity, move: -1 };
+    board.forEach((v, i) => {
+      if (v) return;
+      board[i] = player;
+      const { score: s } = minimax(board, next, depth + 1);
+      board[i] = "";
+      if (player === "O" ? s > best.score : s < best.score) best = { score: s, move: i };
+    });
+    return best;
+  }
+
+  function computerMove() {
+    computerTimer = null;
+    if (over || current !== "O") return;
+    const { move } = minimax([...cells], "O", 0);
+    play(move, true);
+  }
+
+  function play(i, byComputer = false) {
     if (over || cells[i]) return;
+    // 컴퓨터 대전에서는 컴퓨터(O) 차례에 사람이 누를 수 없습니다.
+    if (mode === "computer" && current === "O" && !byComputer) return;
+
     cells[i] = current;
     buttons[i].textContent = current;
     buttons[i].classList.add(current.toLowerCase());
     buttons[i].disabled = true;
 
-    const win = findWin();
+    const win = findWin(cells);
     if (win) {
       over = true;
       win.forEach(n => buttons[n].classList.add("win"));
       score[current]++;
       scoreEls[current].textContent = score[current];
-      statusEl.textContent = `${current} 승리!`;
+      statusEl.textContent = `${winnerName(current)} 승리!`;
       endGame();
     } else if (cells.every(Boolean)) {
       over = true;
@@ -177,6 +240,22 @@
       endGame();
     } else {
       current = current === "X" ? "O" : "X";
+      showTurn();
+      if (mode === "computer" && current === "O") {
+        computerTimer = setTimeout(computerMove, 400);
+      }
+    }
+  }
+
+  function winnerName(p) {
+    if (mode === "computer") return p === "X" ? "나(X)" : "컴퓨터(O)";
+    return p;
+  }
+
+  function showTurn() {
+    if (mode === "computer") {
+      statusEl.textContent = current === "X" ? "내 차례 (X)" : "컴퓨터가 두는 중...";
+    } else {
       statusEl.textContent = `${current} 차례`;
     }
   }
@@ -186,6 +265,9 @@
   }
 
   function reset() {
+    // 컴퓨터가 두기로 예약된 상태였다면 취소합니다.
+    clearTimeout(computerTimer);
+    computerTimer = null;
     cells = Array(9).fill("");
     current = "X";
     over = false;
@@ -194,11 +276,25 @@
       b.disabled = false;
       b.classList.remove("x", "o", "win");
     });
-    statusEl.textContent = "X 차례";
+    showTurn();
   }
 
+  function setMode(newMode) {
+    mode = newMode;
+    modeButtons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === newMode)));
+    labelX.textContent = mode === "computer" ? "나(X)" : "X";
+    labelO.textContent = mode === "computer" ? "컴퓨터(O)" : "O";
+    // 모드를 바꾸면 점수를 새로 셉니다.
+    score.X = 0; score.O = 0; score.draw = 0;
+    scoreEls.X.textContent = 0;
+    scoreEls.O.textContent = 0;
+    scoreEls.draw.textContent = 0;
+    reset();
+  }
+
+  modeButtons.forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
   restartBtn.addEventListener("click", reset);
-  statusEl.textContent = "X 차례";
+  setMode("two");
 </script>
 </body>
 </html>
