@@ -36,10 +36,10 @@
     display: flex;
     justify-content: center;
     gap: 6px;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
   }
 
-  .mode-btn {
+  .mode-btn, .size-btn {
     padding: 6px 14px;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -49,10 +49,17 @@
     cursor: pointer;
   }
 
-  .mode-btn[aria-pressed="true"] {
+  .mode-btn[aria-pressed="true"],
+  .size-btn[aria-pressed="true"] {
     background: var(--ink);
     border-color: var(--ink);
     color: #fff;
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0 0 14px;
   }
 
   .status {
@@ -64,19 +71,19 @@
 
   .board {
     display: grid;
-    grid-template-columns: repeat(3, 96px);
+    grid-template-columns: repeat(var(--n), var(--cell));
     gap: 8px;
     justify-content: center;
     margin-bottom: 24px;
   }
 
   .cell {
-    width: 96px;
-    height: 96px;
+    width: var(--cell);
+    height: var(--cell);
     border: 1px solid var(--line);
     border-radius: 10px;
     background: var(--surface);
-    font-size: 2.5rem;
+    font-size: var(--font);
     font-weight: 800;
     cursor: pointer;
   }
@@ -129,11 +136,18 @@
 <main>
   <h1>틱택토</h1>
 
+  <div class="modes" role="group" aria-label="보드 크기">
+    <button type="button" class="size-btn" data-size="3" aria-pressed="true">3×3</button>
+    <button type="button" class="size-btn" data-size="5" aria-pressed="false">5×5</button>
+    <button type="button" class="size-btn" data-size="7" aria-pressed="false">7×7</button>
+  </div>
+
   <div class="modes" role="group" aria-label="게임 모드">
     <button type="button" class="mode-btn" data-mode="two" aria-pressed="true">2인용</button>
     <button type="button" class="mode-btn" data-mode="computer" aria-pressed="false">컴퓨터 대전</button>
   </div>
 
+  <p class="hint" id="hint"></p>
   <p class="status" id="status"></p>
 
   <div class="scores">
@@ -148,48 +162,67 @@
 </main>
 
 <script>
-  const LINES = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
+  // 보드 크기별로 한 줄로 이겨야 하는 칸 수입니다.
+  const WIN_LENGTH = { 3: 3, 5: 4, 7: 5 };
+  // 칸 크기와 글자 크기입니다.
+  const CELL_SIZE = { 3: "96px", 5: "64px", 7: "48px" };
+  const FONT_SIZE = { 3: "2.5rem", 5: "1.8rem", 7: "1.3rem" };
+  // 줄 안에 같은 색 돌이 n개 있을 때의 점수입니다.
+  const WEIGHT = [0, 1, 10, 100, 1000, 10000, 100000];
 
   const boardEl = document.getElementById("board");
   const statusEl = document.getElementById("status");
+  const hintEl = document.getElementById("hint");
   const restartBtn = document.getElementById("restart");
   const modeButtons = document.querySelectorAll(".mode-btn");
+  const sizeButtons = document.querySelectorAll(".size-btn");
   const labelX = document.getElementById("label-x");
   const labelO = document.getElementById("label-o");
   const scoreEls = { X: document.getElementById("score-x"), O: document.getElementById("score-o"), draw: document.getElementById("score-draw") };
 
   // mode: "two" (2인용) 또는 "computer" (사람 X, 컴퓨터 O)
   let mode = "two";
-  let cells = Array(9).fill("");
+  let size = 3;
+  let WINDOWS = [];      // 승리 판정에 쓰는 모든 줄 (칸 번호 배열)
+  let CELL_WINDOWS = []; // 칸 번호별로, 그 칸을 지나는 줄 목록
+  let buttons = [];
+  let cells = [];
   let current = "X";
   let over = false;
   let computerTimer = null;
   const score = { X: 0, O: 0, draw: 0 };
 
-  // 칸 9개를 만들어 보드에 붙입니다.
-  const buttons = cells.map((_, i) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "cell";
-    btn.setAttribute("aria-label", `${i + 1}번 칸`);
-    btn.addEventListener("click", () => play(i));
-    boardEl.appendChild(btn);
-    return btn;
-  });
+  // 크기 n 보드에서 길이 k짜리 가로, 세로, 대각선 줄을 모두 만듭니다.
+  function buildWindows(n, k) {
+    const wins = [];
+    const idx = (r, c) => r * n + c;
+    const span = (fn) => Array.from({ length: k }, (_, t) => fn(t));
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (c + k <= n) wins.push(span(t => idx(r, c + t)));           // 가로
+        if (r + k <= n) wins.push(span(t => idx(r + t, c)));           // 세로
+        if (r + k <= n && c + k <= n) wins.push(span(t => idx(r + t, c + t))); // ↘ 대각선
+        if (r + k <= n && c - k + 1 >= 0) wins.push(span(t => idx(r + t, c - t))); // ↙ 대각선
+      }
+    }
+    return wins;
+  }
+
+  function buildCellWindows(n, wins) {
+    const map = Array.from({ length: n * n }, () => []);
+    wins.forEach(w => w.forEach(i => map[i].push(w)));
+    return map;
+  }
 
   function findWin(board) {
-    for (const line of LINES) {
-      const [a, b, c] = line;
-      if (board[a] && board[a] === board[b] && board[a] === board[c]) return line;
+    for (const w of WINDOWS) {
+      const first = board[w[0]];
+      if (first && w.every(i => board[i] === first)) return w;
     }
     return null;
   }
 
-  // 컴퓨터(O)가 두는 수: 미니맥스로 최적의 칸을 고릅니다. 컴퓨터는 지지 않습니다.
+  // 3×3 전용: 모든 경우를 따져서 지지 않는 수를 고릅니다.
   function minimax(board, player, depth) {
     const win = findWin(board);
     if (win) return { score: board[win[0]] === "O" ? 10 - depth : depth - 10 };
@@ -207,10 +240,46 @@
     return best;
   }
 
+  // 칸 i에 p를 놓았을 때 바로 한 줄이 완성되는지 확인합니다.
+  function completesLine(i, p) {
+    return CELL_WINDOWS[i].some(w => w.every(j => j === i || cells[j] === p));
+  }
+
+  // 큰 보드용: 바로 이기기 → 상대 막기 → 줄을 만들기 좋은 칸 고르기 순서로 둡니다.
+  function heuristicMove() {
+    const empties = cells.map((v, i) => (v ? -1 : i)).filter(i => i >= 0);
+
+    const winNow = empties.find(i => completesLine(i, "O"));
+    if (winNow !== undefined) return winNow;
+    const blockNow = empties.find(i => completesLine(i, "X"));
+    if (blockNow !== undefined) return blockNow;
+
+    const mid = (size - 1) / 2;
+    let best = empties[0];
+    let bestScore = -Infinity;
+    for (const i of empties) {
+      let s = 0;
+      for (const w of CELL_WINDOWS[i]) {
+        let o = 0, x = 0;
+        for (const j of w) {
+          if (cells[j] === "O") o++;
+          else if (cells[j] === "X") x++;
+        }
+        if (x === 0) s += WEIGHT[o + 1];          // 내 줄을 키울 수 있는 칸
+        if (o === 0) s += WEIGHT[x + 1] * 0.9;    // 상대 줄을 막는 효과
+      }
+      // 점수가 같으면 가운데에 가까운 칸을 고릅니다.
+      const r = Math.floor(i / size), c = i % size;
+      s -= (Math.abs(r - mid) + Math.abs(c - mid)) * 0.01;
+      if (s > bestScore) { bestScore = s; best = i; }
+    }
+    return best;
+  }
+
   function computerMove() {
     computerTimer = null;
     if (over || current !== "O") return;
-    const { move } = minimax([...cells], "O", 0);
+    const move = size === 3 ? minimax([...cells], "O", 0).move : heuristicMove();
     play(move, true);
   }
 
@@ -227,7 +296,7 @@
     const win = findWin(cells);
     if (win) {
       over = true;
-      win.forEach(n => buttons[n].classList.add("win"));
+      win.forEach(idx => buttons[idx].classList.add("win"));
       score[current]++;
       scoreEls[current].textContent = score[current];
       statusEl.textContent = `${winnerName(current)} 승리!`;
@@ -264,11 +333,29 @@
     buttons.forEach(b => b.disabled = true);
   }
 
+  // 현재 크기에 맞게 칸 버튼을 새로 만듭니다.
+  function buildBoard() {
+    boardEl.innerHTML = "";
+    boardEl.style.setProperty("--n", size);
+    boardEl.style.setProperty("--cell", CELL_SIZE[size]);
+    boardEl.style.setProperty("--font", FONT_SIZE[size]);
+    buttons = [];
+    for (let i = 0; i < size * size; i++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cell";
+      btn.setAttribute("aria-label", `${Math.floor(i / size) + 1}행 ${(i % size) + 1}열`);
+      btn.addEventListener("click", () => play(i));
+      boardEl.appendChild(btn);
+      buttons.push(btn);
+    }
+  }
+
   function reset() {
     // 컴퓨터가 두기로 예약된 상태였다면 취소합니다.
     clearTimeout(computerTimer);
     computerTimer = null;
-    cells = Array(9).fill("");
+    cells = Array(size * size).fill("");
     current = "X";
     over = false;
     buttons.forEach(b => {
@@ -279,21 +366,40 @@
     showTurn();
   }
 
+  function resetScores() {
+    score.X = 0; score.O = 0; score.draw = 0;
+    scoreEls.X.textContent = 0;
+    scoreEls.O.textContent = 0;
+    scoreEls.draw.textContent = 0;
+  }
+
   function setMode(newMode) {
     mode = newMode;
     modeButtons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === newMode)));
     labelX.textContent = mode === "computer" ? "나(X)" : "X";
     labelO.textContent = mode === "computer" ? "컴퓨터(O)" : "O";
     // 모드를 바꾸면 점수를 새로 셉니다.
-    score.X = 0; score.O = 0; score.draw = 0;
-    scoreEls.X.textContent = 0;
-    scoreEls.O.textContent = 0;
-    scoreEls.draw.textContent = 0;
+    resetScores();
+    reset();
+  }
+
+  function setSize(n) {
+    size = n;
+    WINDOWS = buildWindows(n, WIN_LENGTH[n]);
+    CELL_WINDOWS = buildCellWindows(n, WINDOWS);
+    hintEl.textContent = `${n}×${n} · ${WIN_LENGTH[n]}개를 한 줄로 놓으면 승리`;
+    sizeButtons.forEach(b => b.setAttribute("aria-pressed", String(Number(b.dataset.size) === n)));
+    buildBoard();
+    // 크기를 바꾸면 점수를 새로 셉니다.
+    resetScores();
     reset();
   }
 
   modeButtons.forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  sizeButtons.forEach(b => b.addEventListener("click", () => setSize(Number(b.dataset.size))));
   restartBtn.addEventListener("click", reset);
+
+  setSize(3);
   setMode("two");
 </script>
 </body>
