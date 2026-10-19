@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>틱택토</title>
+<style>
+  :root {
+    --paper: #E9EEF2;
+    --surface: #FFFFFF;
+    --ink: #1D2B3A;
+    --muted: #6B7A8A;
+    --line: #C9D3DD;
+    --x: #E4572E;
+    --o: #2E6FBA;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: system-ui, "Malgun Gothic", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 48px 16px;
+  }
+
+  main { text-align: center; }
+
+  h1 { font-size: 2rem; margin: 0 0 8px; }
+
+  .status {
+    min-height: 1.5em;
+    color: var(--muted);
+    margin: 0 0 20px;
+    font-size: 1.1rem;
+  }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(3, 96px);
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+
+  .cell {
+    width: 96px;
+    height: 96px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    font-size: 2.5rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .cell:hover:not(:disabled) { background: #F4F7FA; }
+  .cell.x { color: var(--x); }
+  .cell.o { color: var(--o); }
+  .cell.win { background: #FFF3CC; }
+  .cell:disabled { cursor: default; }
+
+  .scores {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .score {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 18px;
+    min-width: 90px;
+  }
+
+  .score b { display: block; font-size: 1.4rem; }
+  .score.x b { color: var(--x); }
+  .score.o b { color: var(--o); }
+
+  button.restart {
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    background: var(--ink);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  button.restart:hover { background: #2E4257; }
+
+  button:focus-visible, .cell:focus-visible {
+    outline: 3px solid var(--x);
+    outline-offset: 2px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>틱택토</h1>
+  <p class="status" id="status"></p>
+
+  <div class="scores">
+    <div class="score x"><span>X</span><b id="score-x">0</b></div>
+    <div class="score"><span>무승부</span><b id="score-draw">0</b></div>
+    <div class="score o"><span>O</span><b id="score-o">0</b></div>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <button type="button" class="restart" id="restart">다시 시작</button>
+</main>
+
+<script>
+  const LINES = [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6],
+  ];
+
+  const boardEl = document.getElementById("board");
+  const statusEl = document.getElementById("status");
+  const restartBtn = document.getElementById("restart");
+  const scoreEls = { X: document.getElementById("score-x"), O: document.getElementById("score-o"), draw: document.getElementById("score-draw") };
+
+  let cells = Array(9).fill("");
+  let current = "X";
+  let over = false;
+  const score = { X: 0, O: 0, draw: 0 };
+
+  // 칸 9개를 만들어 보드에 붙입니다.
+  const buttons = cells.map((_, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cell";
+    btn.setAttribute("aria-label", `${i + 1}번 칸`);
+    btn.addEventListener("click", () => play(i));
+    boardEl.appendChild(btn);
+    return btn;
+  });
+
+  function findWin() {
+    for (const line of LINES) {
+      const [a, b, c] = line;
+      if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) return line;
+    }
+    return null;
+  }
+
+  function play(i) {
+    if (over || cells[i]) return;
+    cells[i] = current;
+    buttons[i].textContent = current;
+    buttons[i].classList.add(current.toLowerCase());
+    buttons[i].disabled = true;
+
+    const win = findWin();
+    if (win) {
+      over = true;
+      win.forEach(n => buttons[n].classList.add("win"));
+      score[current]++;
+      scoreEls[current].textContent = score[current];
+      statusEl.textContent = `${current} 승리!`;
+      endGame();
+    } else if (cells.every(Boolean)) {
+      over = true;
+      score.draw++;
+      scoreEls.draw.textContent = score.draw;
+      statusEl.textContent = "무승부입니다.";
+      endGame();
+    } else {
+      current = current === "X" ? "O" : "X";
+      statusEl.textContent = `${current} 차례`;
+    }
+  }
+
+  function endGame() {
+    buttons.forEach(b => b.disabled = true);
+  }
+
+  function reset() {
+    cells = Array(9).fill("");
+    current = "X";
+    over = false;
+    buttons.forEach(b => {
+      b.textContent = "";
+      b.disabled = false;
+      b.classList.remove("x", "o", "win");
+    });
+    statusEl.textContent = "X 차례";
+  }
+
+  restartBtn.addEventListener("click", reset);
+  statusEl.textContent = "X 차례";
+</script>
+</body>
+</html>
